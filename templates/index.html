@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>BioCalc — Biomass Intelligence v2</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="logo-text">
+      <span class="logo-main">BioCalc</span>
+      <span class="logo-sub">BIOMASS INTELLIGENCE V2</span>
+    </div>
+    <div class="status-pill">
+      <span class="dot"></span> Live API Connected
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- MAP / SITE SELECTOR -->
+  <section class="panel map-panel">
+    <h2><span class="icon-dot"></span> SITE SELECTOR — CLICK MAP OR ENTER COORDINATES</h2>
+    <div id="map"></div>
+    <div class="map-controls">
+      <input type="number" id="latInput" placeholder="Latitude" step="0.0001" value="28.8336">
+      <input type="number" id="lonInput" placeholder="Longitude" step="0.0001" value="30.7849">
+      <button id="searchBtn" class="primary small">SEARCH</button>
+      <div id="weatherStatus" class="weather-status">Click the map to load weather…</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Operational Parameters</h2>
+    <div class="grid params">
+      <label>
+        <span>Target C/N ratio</span>
+        <input type="number" id="target_CN" value="43" min="10" max="80" step="1" />
+      </label>
+      <label>
+        <span>HRT (days)</span>
+        <input type="number" id="HRT" value="40" min="10" max="120" step="1" />
+      </label>
+      <label>
+        <span>Mixture density (kg/m³)</span>
+        <input type="number" id="density" value="1000" min="500" max="1500" step="50" />
+      </label>
+    </div>
+
+    <h3 style="margin-top:24px;">Cow Manure Supply</h3>
+    <div class="grid params">
+      <label class="checkbox-label">
+        <input type="checkbox" id="hasCowManure" checked />
+        <span>I have local cow manure available (no transport needed)</span>
+      </label>
+      <label id="travelWrap" class="hidden-by-default">
+        <span>Travel distance to fetch cow manure (miles)</span>
+        <input type="number" id="travelDistance" value="0" min="0" step="1" />
+      </label>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Cultivated Areas (feddans)</h2>
+    <div class="tabs">
+      {% for gname, gkeys in groups %}
+        <button class="tab-btn {% if loop.first %}active{% endif %}" data-tab="tab{{ loop.index }}">{{ gname }}</button>
+      {% endfor %}
+    </div>
+    {% for gname, gkeys in groups %}
+      <div class="tab-content {% if loop.first %}active{% endif %}" id="tab{{ loop.index }}">
+        <div class="grid crops">
+          {% for k in gkeys %}
+            <label class="crop">
+              <span class="crop-name">{{ labels[k] }}</span>
+              <span class="crop-meta">{{ k }} · {{ waste[k] }} t/feddan</span>
+              <input type="number" class="area-input" data-key="{{ k }}"
+                     min="0" step="0.5" value="{{ defaults.get(k, 0) }}" />
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+  </section>
+
+  <div class="actions">
+    <button id="runBtn" class="primary">▶ Run Simulation</button>
+    <span id="status" class="status"></span>
+  </div>
+
+  <section id="results" class="panel results hidden">
+    <h2>Mixture & Sizing</h2>
+    <div class="metrics">
+      <div class="metric">
+        <span class="label">Lignocellulosic Biomass Fraction (X_li)</span>
+        <span class="value" id="m_xli">—</span>
+      </div>
+      <div class="metric">
+        <span class="label">Cow Manure Fraction (X_n)</span>
+        <span class="value" id="m_xn">—</span>
+      </div>
+      <div class="metric">
+        <span class="label">Total Annual Biomass (Ton)</span>
+        <span class="value" id="m_mt">—</span>
+      </div>
+      <div class="metric">
+        <span class="label">Daily Feed SI_day (kg/day)</span>
+        <span class="value" id="m_siday">—</span>
+      </div>
+      <div class="metric highlight">
+        <span class="label">Digester Volume × 1.25 (m³)</span>
+        <span class="value" id="m_vol">—</span>
+        <span class="hint" id="m_vol_raw"></span>
+      </div>
+    </div>
+
+    <h2 style="margin-top:32px;">Cost Analysis</h2>
+    <div class="metrics">
+      <div class="metric capex">
+        <span class="label">CAPEX — Reactor Capital Cost</span>
+        <span class="value" id="m_capex">—</span>
+        <span class="hint">$112 × digester volume (×1.25)</span>
+      </div>
+      <div class="metric opex">
+        <span class="label">OPEX — Transport (cow manure)</span>
+        <span class="value" id="m_transport">—</span>
+        <span class="hint" id="m_transport_hint">$0.09 × distance × tons</span>
+      </div>
+      <div class="metric opex">
+        <span class="label">OPEX — Electricity</span>
+        <span class="value" id="m_electricity">—</span>
+        <span class="hint">$15 × Total Annual Biomass</span>
+      </div>
+      <div class="metric opex-total">
+        <span class="label">Total OPEX</span>
+        <span class="value" id="m_opex">—</span>
+      </div>
+    </div>
+
+    <h3>Production_Total_SM1 — Annual Biogas Profile</h3>
+    <div class="chart-wrap">
+      <canvas id="prodChart"></canvas>
+    </div>
+    <div class="metrics small">
+      <div class="metric"><span class="label">Peak (L/day)</span><span class="value" id="m_peak">—</span></div>
+      <div class="metric"><span class="label">Mean (L/day)</span><span class="value" id="m_mean">—</span></div>
+      <div class="metric"><span class="label">Annual Total (L)</span><span class="value" id="m_annual">—</span></div>
+    </div>
+
+    <h3>Annual Methane Profile (Biogas × 59% CH₄)</h3>
+    <div class="chart-wrap">
+      <canvas id="methaneChart"></canvas>
+    </div>
+    <div class="metrics small">
+      <div class="metric"><span class="label">Peak CH₄ (L/day)</span><span class="value" id="m_methane_peak">—</span></div>
+      <div class="metric"><span class="label">Annual CH₄ (L)</span><span class="value" id="m_methane_annual">—</span></div>
+    </div>
+  </section>
+</main>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
