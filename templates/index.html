@@ -10,6 +10,8 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 </head>
 <body>
 <header>
@@ -26,18 +28,25 @@
 
 <main>
 
-  <!-- MAP / SITE SELECTOR -->
+  <!-- ============ SECTION 1 — SITE SELECTOR ============ -->
   <section class="panel map-panel">
-    <h2><span class="icon-dot"></span> SITE SELECTOR — CLICK MAP OR ENTER COORDINATES</h2>
+    <h2><span class="icon-dot"></span> SITE SELECTOR — SEARCH, CLICK MAP, OR ENTER COORDINATES</h2>
+    <div class="search-row">
+      <input type="text" id="placeSearch"
+             placeholder="Search country, city, village, landmark, or  29.9765, 31.1313" autocomplete="off">
+      <button id="placeSearchBtn" class="primary small">SEARCH</button>
+      <div id="searchResults" class="search-results"></div>
+    </div>
     <div id="map"></div>
     <div class="map-controls">
       <input type="number" id="latInput" placeholder="Latitude" step="0.0001" value="28.8336">
       <input type="number" id="lonInput" placeholder="Longitude" step="0.0001" value="30.7849">
-      <button id="searchBtn" class="primary small">SEARCH</button>
-      <div id="weatherStatus" class="weather-status">Click the map to load weather…</div>
+      <button id="searchBtn" class="primary small">GO TO COORDS</button>
+      <div id="weatherStatus" class="weather-status">Search or click the map to load weather…</div>
     </div>
   </section>
 
+  <!-- ============ SECTION 2 — OPERATIONAL PARAMETERS ============ -->
   <section class="panel">
     <h2>Operational Parameters</h2>
     <div class="grid params">
@@ -68,61 +77,139 @@
     </div>
   </section>
 
+  <!-- ============ SECTION 3 — MODE SELECTION ============ -->
   <section class="panel">
-    <h2>Cultivated Areas (feddans)</h2>
-    <div class="tabs">
-      {% for gname, gkeys in groups %}
-        <button class="tab-btn {% if loop.first %}active{% endif %}" data-tab="tab{{ loop.index }}">{{ gname }}</button>
-      {% endfor %}
+    <h2>Calculation Mode</h2>
+    <div class="mode-tabs">
+      <button class="mode-btn active" data-mode="mode1">Mode 1 — Calculate From Feddans</button>
+      <button class="mode-btn" data-mode="mode2">Mode 2 — Calculate Required Feddans</button>
     </div>
-    {% for gname, gkeys in groups %}
-      <div class="tab-content {% if loop.first %}active{% endif %}" id="tab{{ loop.index }}">
-        <div class="grid crops">
-          {% for k in gkeys %}
-            <label class="crop">
-              <span class="crop-name">{{ labels[k] }}</span>
-              <span class="crop-meta">{{ k }} · {{ waste[k] }} t/feddan</span>
-              <input type="number" class="area-input" data-key="{{ k }}"
-                     min="0" step="0.5" value="{{ defaults.get(k, 0) }}" />
-            </label>
-          {% endfor %}
-        </div>
+
+    <!-- ---- MODE 1 INPUTS ---- -->
+    <div class="mode-content active" id="mode1">
+      <p class="mode-hint">You own the land. Enter your crops and feddans — we size the plant and estimate gas output.</p>
+      <div class="tabs">
+        {% for gname, gkeys in groups %}
+          <button class="tab-btn {% if loop.first %}active{% endif %}" data-tab="tab{{ loop.index }}">{{ gname }}</button>
+        {% endfor %}
       </div>
-    {% endfor %}
+      {% for gname, gkeys in groups %}
+        <div class="tab-content {% if loop.first %}active{% endif %}" id="tab{{ loop.index }}">
+          <div class="grid crops">
+            {% for k in gkeys %}
+              <label class="crop">
+                <span class="crop-name">{{ labels[k] }}</span>
+                <span class="crop-meta">{{ symbols[k] }} · {{ k }} · {{ waste[k] }} t/feddan</span>
+                <input type="number" class="area-input" data-key="{{ k }}"
+                       min="0" step="0.5" value="{{ defaults.get(k, 0) }}" />
+              </label>
+            {% endfor %}
+          </div>
+        </div>
+      {% endfor %}
+      <div class="actions">
+        <button id="runBtn" class="primary">▶ Run Simulation</button>
+        <span id="status" class="status"></span>
+      </div>
+    </div>
+
+    <!-- ---- MODE 2 INPUTS ---- -->
+    <div class="mode-content" id="mode2">
+      <p class="mode-hint">You know how much gas you need per year. Pick crops — we compute the required cultivated area.</p>
+      <h3>Select Crop Type(s)</h3>
+      <div class="grid crops">
+        {% for gname, gkeys in groups %}
+          {% for k in gkeys %}
+            {% if waste[k] > 0 %}
+              <label class="crop checkbox-crop">
+                <input type="checkbox" class="crop2-check" data-key="{{ k }}">
+                <span class="crop-name">{{ labels[k] }}</span>
+                <span class="crop-meta">{{ symbols[k] }} · {{ k }} · {{ waste[k] }} t/feddan</span>
+              </label>
+            {% endif %}
+          {% endfor %}
+        {% endfor %}
+      </div>
+
+      <div class="grid params" style="margin-top:20px;">
+        <label>
+          <span>Gas type</span>
+          <select id="gasType">
+            <option value="biogas">Biogas</option>
+            <option value="methane">Methane</option>
+          </select>
+        </label>
+        <label>
+          <span>Required annual quantity</span>
+          <input type="number" id="targetValue" value="100000" min="0" step="1000" />
+        </label>
+        <label>
+          <span>Unit</span>
+          <select id="gasUnit">
+            <option value="m3">m³ / year</option>
+            <option value="liter">Liter / year</option>
+          </select>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="runBtn2" class="primary">▶ Calculate Required Feddans</button>
+        <span id="status2" class="status"></span>
+      </div>
+    </div>
   </section>
 
-  <div class="actions">
-    <button id="runBtn" class="primary">▶ Run Simulation</button>
-    <span id="status" class="status"></span>
-  </div>
-
+  <!-- ============ RESULTS (shared by both modes) ============ -->
   <section id="results" class="panel results hidden">
-    <h2>Mixture & Sizing</h2>
-    <div class="metrics">
-      <div class="metric">
-        <span class="label">Lignocellulosic Biomass Fraction (X_li)</span>
-        <span class="value" id="m_xli">—</span>
-      </div>
-      <div class="metric">
-        <span class="label">Cow Manure Fraction (X_n)</span>
-        <span class="value" id="m_xn">—</span>
-      </div>
-      <div class="metric">
-        <span class="label">Total Annual Biomass (Ton)</span>
-        <span class="value" id="m_mt">—</span>
-      </div>
-      <div class="metric">
-        <span class="label">Daily Feed SI_day (kg/day)</span>
-        <span class="value" id="m_siday">—</span>
-      </div>
-      <div class="metric highlight">
-        <span class="label">Digester Volume × 1.25 (m³)</span>
-        <span class="value" id="m_vol">—</span>
-        <span class="hint" id="m_vol_raw"></span>
+    <div class="results-head">
+      <h2 id="resultsTitle">Results</h2>
+      <div class="export-btns">
+        <button id="exportPdf" class="ghost small">⤓ PDF</button>
+        <button id="exportXlsx" class="ghost small">⤓ Excel</button>
       </div>
     </div>
 
-    <h2 style="margin-top:32px;">Cost Analysis</h2>
+    <!-- Mode-2-only required feddans highlight -->
+    <div id="reqFeddansWrap" class="metrics hidden" style="margin-bottom:18px;">
+      <div class="metric highlight">
+        <span class="label">Required Cultivated Area</span>
+        <span class="value" id="m_reqfeddans">—</span>
+        <span class="hint">feddans per selected crop</span>
+      </div>
+    </div>
+
+    <h3>Feedstock</h3>
+    <div class="metrics">
+      <div class="metric"><span class="label">Lignocellulosic Fraction X_li</span><span class="value" id="m_xli">—</span></div>
+      <div class="metric"><span class="label">Cow Manure Fraction X_n</span><span class="value" id="m_xn">—</span></div>
+      <div class="metric"><span class="label">Total Annual Biomass</span><span class="value" id="m_mli">—</span><span class="hint">ton/year</span></div>
+      <div class="metric"><span class="label">Required Cow Manure</span><span class="value" id="m_mn">—</span><span class="hint">ton/year</span></div>
+      <div class="metric"><span class="label">Total Feedstock</span><span class="value" id="m_mt">—</span><span class="hint">ton/year</span></div>
+    </div>
+
+    <h3>Digester &amp; Water</h3>
+    <div class="metrics">
+      <div class="metric"><span class="label">Daily Feed (SI_day)</span><span class="value" id="m_siday">—</span><span class="hint">kg/day</span></div>
+      <div class="metric"><span class="label">Water Required / Day</span><span class="value" id="m_water">—</span><span class="hint">kg/day</span></div>
+      <div class="metric"><span class="label">Digester Volume</span><span class="value" id="m_dig">—</span><span class="hint">m³</span></div>
+      <div class="metric highlight"><span class="label">Digester Design × 1.25</span><span class="value" id="m_vol">—</span><span class="hint">m³</span></div>
+    </div>
+
+    <h3>Tank Volumes</h3>
+    <div class="metrics">
+      <div class="metric"><span class="label">Storage Tank</span><span class="value" id="m_storage">—</span><span class="hint">7 × (feed + water), m³</span></div>
+      <div class="metric"><span class="label">Separation Tank</span><span class="value" id="m_sep">—</span><span class="hint">(digester / 4) × 1.25, m³</span></div>
+    </div>
+
+    <h3>Gas Production</h3>
+    <div class="metrics">
+      <div class="metric"><span class="label">Annual Biogas</span><span class="value" id="m_biogas_m3">—</span><span class="hint">m³/year</span></div>
+      <div class="metric"><span class="label">Annual Biogas</span><span class="value" id="m_biogas_l">—</span><span class="hint">liter/year</span></div>
+      <div class="metric"><span class="label">Methane Content</span><span class="value" id="m_ch4pct">—</span><span class="hint">%</span></div>
+      <div class="metric"><span class="label">Annual Methane</span><span class="value" id="m_ch4_m3">—</span><span class="hint">m³/year</span></div>
+      <div class="metric"><span class="label">Annual Methane</span><span class="value" id="m_ch4_l">—</span><span class="hint">liter/year</span></div>
+    </div>
+
+    <h3 style="margin-top:28px;">Cost Analysis</h3>
     <div class="metrics">
       <div class="metric capex">
         <span class="label">CAPEX — Reactor Capital Cost</span>
@@ -145,25 +232,44 @@
       </div>
     </div>
 
-    <h3>Production_Total_SM1 — Annual Biogas Profile</h3>
-    <div class="chart-wrap">
-      <canvas id="prodChart"></canvas>
-    </div>
+    <h3>Annual Biogas Profile</h3>
+    <div class="chart-wrap"><canvas id="prodChart"></canvas></div>
     <div class="metrics small">
       <div class="metric"><span class="label">Peak (L/day)</span><span class="value" id="m_peak">—</span></div>
       <div class="metric"><span class="label">Mean (L/day)</span><span class="value" id="m_mean">—</span></div>
       <div class="metric"><span class="label">Annual Total (L)</span><span class="value" id="m_annual">—</span></div>
     </div>
 
-    <h3>Annual Methane Profile (Biogas × 59% CH₄)</h3>
-    <div class="chart-wrap">
-      <canvas id="methaneChart"></canvas>
-    </div>
+    <h3>Annual Methane Profile</h3>
+    <div class="chart-wrap"><canvas id="methaneChart"></canvas></div>
     <div class="metrics small">
       <div class="metric"><span class="label">Peak CH₄ (L/day)</span><span class="value" id="m_methane_peak">—</span></div>
       <div class="metric"><span class="label">Annual CH₄ (L)</span><span class="value" id="m_methane_annual">—</span></div>
     </div>
   </section>
+
+  <!-- ============ SECTION 4 — TANK GEOMETRY & LAYOUT ============ -->
+  <section id="geometry" class="panel hidden">
+    <h2>Tank Geometry &amp; Layout</h2>
+    <p class="mode-hint">Calculated volumes are used automatically. Choose a shape and enter a height for each tank.</p>
+    <div class="tank-config grid">
+      <!-- cards injected by JS, one per tank -->
+    </div>
+    <div class="actions">
+      <button id="runGeoBtn" class="primary">▶ Compute Geometry</button>
+      <span id="geoStatus" class="status"></span>
+    </div>
+    <div id="geoResults" class="tank-results hidden"></div>
+  </section>
+
+  <!-- ============ SECTION 5 — TANK VISUALIZATION ============ -->
+  <section id="visualization" class="panel hidden">
+    <h2>Tank Visualization — Preliminary Site Plan</h2>
+    <div id="tankSvgWrap" class="svg-wrap">
+      <svg id="tankSvg" viewBox="0 0 1000 460" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+  </section>
+
 </main>
 
 <script src="{{ url_for('static', filename='app.js') }}"></script>
